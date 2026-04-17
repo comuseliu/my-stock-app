@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>股票存股紀錄（單人版）</title>
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#2c3e50">
+<link rel="manifest" href="manifest.json">
+<script>
+  // 註冊 Service Worker，讓 App 具備離線運作潛力
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js')
+        .then(reg => console.log('Service Worker 註冊成功', reg))
+        .catch(err => console.log('Service Worker 註冊失敗', err));
+    });
+  }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI", sans-serif; background:#f4f6f9; padding:12px; margin:0; }
+.container { background:#fff; padding:16px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.08); }
+h2 { margin:0 0 12px; font-size:18px; }
+
+/* 頂部工具列 */
+.toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:10px; }
+.toolbar label { font-size:14px; white-space:nowrap; }
+button { border:none; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:14px; white-space:nowrap; }
+.btn-add    { background:#4caf50; color:#fff; }
+.btn-save   { background:#2196f3; color:#fff; }
+.btn-export { background:#673ab7; color:#fff; }
+
+/* 持有人名稱可編輯 */
+#ownerName {
+  font-size:16px; font-weight:bold;
+  border:none; border-bottom:2px solid #2196f3;
+  background:transparent; width:90px;
+  padding:2px 4px; color:#2c3e50; outline:none;
+}
+#ownerName:focus { background:#e3f2fd; border-radius:4px 4px 0 0; }
+
+/* 摘要 */
+.summary { margin:8px 0; padding:10px 14px; background:#eef; border-radius:8px; font-size:14px; line-height:1.8; }
+
+/* 表格捲動包覆 */
+.table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
+table { border-collapse:collapse; min-width:900px; width:100%; margin-top:6px; font-size:13px; }
+th { background:#2c3e50; color:#fff; padding:8px 6px; white-space:nowrap; }
+td { border:1px solid #ddd; padding:5px 4px; text-align:center; vertical-align:middle; }
+
+input.num        { width:52px; padding:3px; border:1px solid #ccc; border-radius:4px; text-align:center; font-size:13px; }
+input.code-input { width:68px; padding:3px; border:1px solid #ccc; border-radius:4px; font-size:13px; }
+input.name-input { width:108px; padding:3px; border:1px solid #ccc; border-radius:4px; font-size:13px; }
+
+.q1 { background:#e3f2fd; }
+.q2 { background:#e8f5e9; }
+.q3 { background:#fff3e0; }
+.q4 { background:#fce4ec; }
+.subtotal { font-size:11px; color:#555; }
+
+/* 拖拉 */
+tr.dragging td { opacity:0.4; }
+tr.drag-over-top    td { border-top:3px solid #2196f3 !important; }
+tr.drag-over-bottom td { border-bottom:3px solid #2196f3 !important; }
+td.drag-handle { cursor:grab; font-size:16px; color:#bbb; user-select:none; width:24px; }
+td.drag-handle:active { cursor:grabbing; }
+
+/* ===== 張數彈窗 ===== */
+.shares-btn {
+  background:#f0f4ff; border:1px solid #90caf9;
+  border-radius:6px; padding:4px 8px; cursor:pointer;
+  font-size:13px; white-space:nowrap; min-width:52px;
+}
+.shares-btn:hover { background:#bbdefb; }
+
+/* 遮罩 */
+.modal-mask {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.35); z-index:100;
+  align-items:center; justify-content:center;
+}
+.modal-mask.open { display:flex; }
+
+.modal {
+  background:#fff; border-radius:14px;
+  padding:20px; width:min(360px, 92vw);
+  box-shadow:0 8px 32px rgba(0,0,0,0.2);
+}
+.modal h3 { margin:0 0 14px; font-size:16px; }
+.modal-grid {
+  display:grid; grid-template-columns:1fr 1fr;
+  gap:8px; margin-bottom:16px;
+}
+.modal-grid label { font-size:13px; color:#555; }
+.modal-grid input {
+  width:100%; padding:6px 8px; border:1px solid #ccc;
+  border-radius:6px; font-size:14px; text-align:center;
+}
+.modal-grid input:focus { outline:none; border-color:#2196f3; }
+
+/* 季標題 */
+.modal-q {
+  grid-column:1/-1; font-size:11px; font-weight:bold;
+  color:#888; letter-spacing:.5px; margin:4px 0 0;
+}
+
+.modal-btns { display:flex; gap:8px; justify-content:flex-end; }
+.modal-btns button { padding:8px 20px; font-size:14px; }
+.btn-ok     { background:#2196f3; color:#fff; }
+.btn-cancel { background:#eee; color:#333; }
+
+/* ===== 手機微調 ===== */
+@media(max-width:600px){
+  h2 { font-size:16px; }
+  .toolbar { gap:4px; }
+  button { padding:7px 10px; font-size:13px; }
+  table { font-size:12px; }
+  input.name-input { width:88px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h2>📊 股票存股紀錄（單人版）</h2>
+
+<div class="toolbar">
+  <label>👤 持有人：</label>
+  <input id="ownerName" value="富人" title="點擊可修改名稱">
+  <button class="btn-add"    onclick="addRow()">➕ 新增</button>
+  <button class="btn-save"   onclick="save()">💾 儲存</button>
+  <button class="btn-export" onclick="exportExcel()">📥 匯出</button>
+</div>
+
+<div class="summary" id="summary"></div>
+
+<div class="table-wrap">
+<table id="stockTable">
+  <thead>
+    <tr>
+      <th>⠿</th>
+      <th>股票</th><th>名稱</th><th>張數</th>
+      <th class="q1">1</th><th class="q1">2</th><th class="q1">3</th>
+      <th class="q2">4</th><th class="q2">5</th><th class="q2">6</th>
+      <th class="q3">7</th><th class="q3">8</th><th class="q3">9</th>
+      <th class="q4">10</th><th class="q4">11</th><th class="q4">12</th>
+      <th>年</th><th>刪</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+  <tfoot id="monthlyTotal"></tfoot>
+</table>
+</div>
+
+</div>
+
+<div class="modal-mask" id="modalMask" onclick="closeModalOnMask(event)">
+  <div class="modal">
+    <h3 id="modalTitle">📅 各月張數</h3>
+    <div class="modal-grid" id="modalGrid"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-ok"     onclick="applyModal()">確認</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = "stock_single_v2";
+const QNAMES = ["Q1","Q2","Q3","Q4"];
+
+// ===== 預設資料 =====
+let defaultData = [
+  {code:"0056",   name:"元大高股息",              shares:[60,60,60,60,60,60,60,60,60,60,60,60],   div:[0.866,0,0,1,0,0,0,0,0,0,0,0]},
+  {code:"00984",  name:"主動安聯台灣高息",         shares:[76,76,76,76,76,76,76,76,76,76,76,76],   div:[0.168,0,0,0.268,0,0,0,0,0,0,0,0]},
+  {code:"00878",  name:"國泰永續高股息",           shares:[100,100,100,100,100,100,100,100,100,100,100,100], div:[0,0.42,0,0,0,0,0,0,0,0,0,0]},
+  {code:"00982A", name:"主動群益台灣強棒",         shares:[100,100,100,100,100,100,100,100,100,100,100,100], div:[0,0.377,0,0,0,0,0,0,0,0,0,0]},
+  {code:"00919",  name:"群益台灣精選高息",         shares:[100,100,100,100,100,100,100,100,100,100,100,100], div:[0,0,0.78,0,0,0,0,0,0,0,0,0]},
+  {code:"00918",  name:"群益台灣大華優利高填息30", shares:[50,50,50,50,50,50,50,50,50,50,50,50],    div:[0,0,0.62,0,0,0,0,0,0,0,0,0]},
+  {code:"00981A", name:"主動統一台股增長",         shares:[50,50,50,50,50,50,50,50,50,50,50,50],    div:[0,0,0.41,0,0,0,0,0,0,0,0,0]}
+];
+
+// 舊資料相容：shares 若為數字轉陣列
+function normalizeData(arr){
+  return arr.map(r=>{
+    if(typeof r.shares === "number") r.shares = Array(12).fill(r.shares);
+    return r;
+  });
+}
+
+// 讀取儲存
+let saved = localStorage.getItem(STORAGE_KEY);
+// 也嘗試讀舊版 key 做升級
+if(!saved){
+  let old = localStorage.getItem("stock_single");
+  if(old){
+    let o = JSON.parse(old);
+    saved = JSON.stringify({ owner: o.owner||"富人", data: normalizeData(o.data) });
+  }
+}
+let store = saved ? JSON.parse(saved) : { owner:"富人", data: JSON.parse(JSON.stringify(defaultData)) };
+store.data = normalizeData(store.data);
+
+let data = store.data;
+document.getElementById("ownerName").value = store.owner;
+
+// 拖拉狀態
+let dragSrcIndex  = null;
+// 彈窗狀態
+let modalRowIndex = null;
+let modalShares   = [];
+
+// ===== 儲存 =====
+function save(){
+  let owner = document.getElementById("ownerName").value || "富人";
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ owner, data }));
+  alert("已儲存：" + owner);
+}
+
+// ===== 計算 =====
+function calcYearTotal(r){
+  return r.div.reduce((s,d,m)=> s + d * 1000 * r.shares[m], 0);
+}
+function calcMonthly(r, m){
+  return r.div[m] * 1000 * r.shares[m];
+}
+function sharesDisplay(r){
+  let mn = Math.min(...r.shares), mx = Math.max(...r.shares);
+  return mn === mx ? String(mn) : mn+"~"+mx;
+}
+function getQ(i){ return i<3?"q1":i<6?"q2":i<9?"q3":"q4"; }
+
+// ===== 渲染 =====
+function render(){
+  let owner = document.getElementById("ownerName").value || "富人";
+  let tbody = document.querySelector("tbody");
+  tbody.innerHTML = "";
+  let monthly = Array(12).fill(0);
+
+  data.forEach((r, i) => {
+    let tr1 = document.createElement("tr");
+    tr1.dataset.index = i;
+    tr1.draggable = true;
+    setupDragEvents(tr1, i);
+
+    let html = `
+      <td class="drag-handle" rowspan="2">⠿</td>
+      <td rowspan="2"><input class="code-input" value="${r.code}"
+            onchange="update(${i},'code',this.value)" placeholder="代號"></td>
+      <td rowspan="2"><input class="name-input" value="${r.name}"
+            onchange="update(${i},'name',this.value)" placeholder="名稱"></td>
+      <td rowspan="2">
+        <button class="shares-btn" onclick="openModal(${i})">${sharesDisplay(r)}張<br><span style="font-size:10px;color:#888">📅點擊</span></button>
+      </td>
+    `;
+
+    r.div.forEach((d,m)=>{
+      html += `<td class="${getQ(m)}"><input class="num" value="${d}"
+                 onchange="updateDiv(${i},${m},this.value)"></td>`;
+      monthly[m] += calcMonthly(r, m);
+    });
+
+    html += `<td rowspan="2">${Math.round(calcYearTotal(r))}</td>
+             <td rowspan="2"><button onclick="removeRow(${i})">❌</button></td>`;
+    tr1.innerHTML = html;
+
+    let tr2 = document.createElement("tr");
+    tr2.dataset.index = i;
+    let html2 = "";
+    r.div.forEach((d,m)=>{
+      html2 += `<td class="subtotal ${getQ(m)}">${Math.round(calcMonthly(r,m))}</td>`;
+    });
+    tr2.innerHTML = html2;
+
+    tbody.appendChild(tr1);
+    tbody.appendChild(tr2);
+  });
+
+  renderFooter(monthly);
+  renderSummary(monthly, owner);
+}
+
+// ===== 張數彈窗 =====
+function openModal(i){
+  modalRowIndex = i;
+  modalShares   = [...data[i].shares];
+
+  document.getElementById("modalTitle").textContent =
+    `📅 ${data[i].code || "股票"} 各月張數`;
+
+  let grid = document.getElementById("modalGrid");
+  grid.innerHTML = "";
+
+  for(let q=0; q<4; q++){
+    let qDiv = document.createElement("div");
+    qDiv.className = "modal-q";
+    qDiv.textContent = QNAMES[q];
+    grid.appendChild(qDiv);
+
+    for(let mq=0; mq<3; mq++){
+      let m = q*3 + mq;
+
+      let label = document.createElement("label");
+      label.textContent = (m+1)+"月";
+
+      let inp = document.createElement("input");
+      inp.type  = "number";
+      inp.min   = "0";
+      inp.value = modalShares[m];
+      inp.dataset.month = m;
+      inp.addEventListener("input", e=>{
+        modalShares[Number(e.target.dataset.month)] = Number(e.target.value)||0;
+      });
+
+      grid.appendChild(label);
+      grid.appendChild(inp);
+    }
+  }
+
+  // 全年套用列
+  let fillRow = document.createElement("div");
+  fillRow.className = "modal-q";
+  fillRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:10px;";
+  fillRow.innerHTML = `
+    <span style="font-size:12px;color:#555;white-space:nowrap">全年套用：</span>
+    <input id="fillVal" type="number" min="0" placeholder="張數"
+      style="width:70px;padding:5px;border:1px solid #ccc;border-radius:6px;font-size:13px">
+    <button onclick="fillAll()"
+      style="padding:5px 12px;background:#ff9800;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">
+      套用
+    </button>`;
+  grid.appendChild(fillRow);
+
+  document.getElementById("modalMask").classList.add("open");
+}
+
+function fillAll(){
+  let val = Number(document.getElementById("fillVal").value)||0;
+  modalShares = Array(12).fill(val);
+  document.querySelectorAll("#modalGrid input[data-month]").forEach(inp=>{
+    inp.value = val;
+  });
+}
+
+function applyModal(){
+  data[modalRowIndex].shares = [...modalShares];
+  closeModal();
+  render();
+}
+
+function closeModal(){
+  document.getElementById("modalMask").classList.remove("open");
+  modalRowIndex = null;
+}
+
+function closeModalOnMask(e){
+  if(e.target === document.getElementById("modalMask")) closeModal();
+}
+
+// ===== 拖拉 =====
+function setupDragEvents(tr, index){
+  tr.addEventListener("dragstart", e=>{
+    dragSrcIndex = index;
+    tr.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+  });
+  tr.addEventListener("dragend", ()=>{
+    document.querySelectorAll("tbody tr").forEach(r=>
+      r.classList.remove("dragging","drag-over-top","drag-over-bottom"));
+    dragSrcIndex = null;
+  });
+  tr.addEventListener("dragover", e=>{
+    e.preventDefault();
+    document.querySelectorAll("tbody tr").forEach(r=>
+      r.classList.remove("drag-over-top","drag-over-bottom"));
+    let rect = tr.getBoundingClientRect();
+    if(e.clientY < rect.top + rect.height/2) tr.classList.add("drag-over-top");
+    else tr.classList.add("drag-over-bottom");
+  });
+  tr.addEventListener("dragleave", ()=>{
+    tr.classList.remove("drag-over-top","drag-over-bottom");
+  });
+  tr.addEventListener("drop", e=>{
+    e.preventDefault();
+    let targetIndex = Number(tr.dataset.index);
+    if(dragSrcIndex === null || dragSrcIndex === targetIndex) return;
+    let rect = tr

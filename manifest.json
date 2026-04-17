@@ -1,0 +1,15 @@
+{
+  "name": "存股紀錄單人版",
+  "short_name": "存股App",
+  "start_url": "存股紀錄_單人版_月張數.html",
+  "display": "standalone",
+  "background_color": "#f4f6f9",
+  "theme_color": "#2c3e50",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2452/2452144.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
